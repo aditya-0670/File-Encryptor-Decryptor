@@ -1,49 +1,177 @@
-# Your Parallel Encryption and Decryption
 
-## Overview
+# File Encryptor — Parallel Encryption & Decryption in C++
 
-This project demonstrates the implementation of encryption and decryption mechanisms using parallel processing techniques in C++. By leveraging both multiprocessing and multithreading, the project aims to enhance the efficiency and performance of cryptographic operations.
+## 📖 Project Overview
 
-## Branches
+**File Encryptor** is a C++ application that demonstrates two different parallel‐processing strategies for file encryption and decryption:
 
-The repository contains two primary branches, each focusing on a distinct parallel processing approach:
+1. **Multiprocessing** (via `fork()`)  
+2. **Multithreading** (via `pthread` + shared memory + semaphores)
 
-### 1. `add/childProcessing`
+By splitting large input directories into chunks and processing them in parallel, this tool maximizes CPU utilization and reduces wall‐clock time for cryptographic operations.
 
-**Description:** This branch showcases the use of parallel multiprocessing by creating child processes to handle encryption and decryption tasks. It utilizes the `fork()` system call to spawn child processes, enabling concurrent execution of tasks.
+---
 
-**Key Features:**
+## 🌲 Repository Structure
 
-- **Process Management:** Implements process creation and management using `fork()`.
-- **Task Queue:** Manages encryption and decryption tasks using a queue structure.
-- **Task Execution:** Child processes execute tasks independently, allowing parallel processing.
+```
 
-### 2. `add/multithreading`
+encrypty/
+├── src/
+│   └── app/
+│       ├── processes/
+│       │   ├── ProcessManagement.hpp    ← Task scheduler & process‐spawn logic
+│       │   ├── ProcessManagement.cpp
+│       │   ├── Task.hpp                 ← Represents one file‐chunk task
+│       │   └── Task.cpp
+│       ├── threading/
+│       │   ├── ThreadPool.hpp           ← Thread manager & worker pool
+│       │   ├── ThreadPool.cpp
+│       │   └── SyncPrimitives.hpp       ← Shared memory + semaphores
+│       └── common/
+│           ├── CryptoEngine.hpp         ← AES/CBC implementation
+│           └── CryptoEngine.cpp
+├── test/                              ← Sample input directories & expected outputs
+│   └── test2.txt
+├── main.cpp                           ← CLI: reads directory + ENCRYPT/DECRYPT
+├── Makefile                           ← Build rules for both branches
+└── README.md                          ← You are here
 
-**Description:** This branch focuses on multithreading combined with shared memory to perform encryption and decryption. It employs POSIX threads (`pthread`) and utilizes shared memory segments for efficient inter-thread communication.
+````
 
-**Key Features:**
+---
 
-- **Multithreading:** Implements concurrent execution using POSIX threads.
-- **Shared Memory:** Utilizes shared memory for communication between threads.
-- **Semaphores:** Employs semaphores to manage synchronization and ensure data consistency.
+## 🌿 Branches
 
-## Getting Started
+### 1. `add/childProcessing` (Multiprocessing)
 
-To explore the implementations in each branch:
+- **Key Files:**  
+  - `src/app/processes/ProcessManagement.*`  
+  - `src/app/processes/Task.*`
 
-   ```bash
-   git clone <repo-url>
-   cd encrypty
-   git checkout <branch>
-   # Now make a virtual env and activate
-   python -m venv /myvenv
-   source myvenv/bin/activate
-   python makeDirs.py
-   make
-   ./encrypty
-   # type directory name which is created from makeDirs.py
-   test
-   ENCRYPT # after giving directory name, give ENCRYPT or DECRYPT to tell what to do
-   ```
+- **Flow:**
+  1. **TaskScheduler** (in `ProcessManagement`) scans the input directory and splits files into _N_ chunks.
+  2. For each chunk, `fork()` spawns a **child process**.
+  3. Each child calls `CryptoEngine::encryptChunk()` or `decryptChunk()`.
+  4. Parent waits (`waitpid`) for all children, then recombines output into final files.
 
+- **Pros:** OS‐level isolation, no data races  
+- **Cons:** Higher memory overhead, IPC complexity
+
+---
+
+### 2. `add/multithreading` (Multithreading + Shared Memory)
+
+- **Key Files:**  
+  - `src/app/threading/ThreadPool.*`  
+  - `src/app/threading/SyncPrimitives.*`
+
+- **Flow:**
+  1. **ThreadPool** creates a shared memory region (`mmap`) sized to hold _M_ chunks.
+  2. Launches _T_ POSIX threads; each thread:
+     - Reads its assigned chunk from shared memory  
+     - Calls `CryptoEngine::encryptChunk()` / `decryptChunk()`  
+     - Writes back to its segment
+  3. Semaphores (in `SyncPrimitives`) guard access to shared buffers.
+  4. Main thread writes all processed chunks to disk.
+
+- **Pros:** Lower overhead, fast context switches  
+- **Cons:** Manual synchronization, risk of deadlocks/races
+
+---
+
+## 🏗️ Architecture & Data Flow
+
+```plaintext
++-------------+
+|  main.cpp   |  ── parses args ──► [TaskScheduler]
++-------------+                      ├─ splits directory into chunks
+       │                             └─ pushes Task objects
+       ▼
++----------------------+       +----------------------+       +----------------------+
+| Multiprocessing Mode |──────►|  Encrypt/Decrypt     |◄──────| Multithreading Mode  |
+|  (fork & children)   |       |    CryptoEngine      |       |  (pthread pool)      |
++----------------------+       +----------------------+       +----------------------+
+       │                                 ▲                             │
+       └────────► [ResultCollector] ◄────┘◄────────[SyncPrimitives]◄───┘
+                    writes final files
+````
+
+* **TaskScheduler**
+
+  * Scans `directory/`
+  * Creates `Task { filepath, offset, length }`
+
+* **Process/Thread Workers**
+
+  * Fetch a `Task`
+  * Call `CryptoEngine::process(buffer, key, iv)`
+  * Signal completion
+
+* **ResultCollector**
+
+  * Merges processed buffers into full output files
+
+---
+
+## ⚙️ Build & Run
+
+```bash
+# 1. Clone & switch branch
+git clone https://github.com/<you>/encrypty.git
+cd encrypty
+git checkout add/childProcessing   # or add/multithreading
+
+# 2. (Optional) Python helper for test dirs
+python3 -m venv venv
+source venv/bin/activate
+python makeDirs.py
+
+# 3. Build
+make
+
+# 4. Run
+./encrypty
+# prompts:
+#   Enter the directory path:  test/
+#   Enter the action (encrypt/decrypt): ENCRYPT
+```
+
+Outputs are written alongside originals as `*.enc` or `*.dec` extensions.
+
+---
+
+## 🚀 Performance Tips
+
+* **Chunk Size:**
+
+  * Too small → high overhead
+  * Too large → poor CPU‐I/O overlap
+* **Worker Count:**
+
+  * ≈ number of CPU cores (multithreading)
+  * ≤ number of cores (forking)
+* **I/O Optimizations:**
+
+  * Use `O_DIRECT` or asynchronous I/O
+  * Tune read/write buffer sizes
+
+---
+
+## 🎯 Future Enhancements
+
+* **Benchmark Harness** to compare modes
+* **Key Management Module** (e.g., HSM integration)
+* **Distributed Mode** via MPI or ZeroMQ
+* **GPU Offload** for CryptoEngine
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/your-feature`)
+3. Commit your changes
+4. Open a PR against `main`
+
+Please adhere to the existing code style and add tests in `test/`!
