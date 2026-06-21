@@ -1,0 +1,6 @@
+{
+  "buildCommand": "npm --prefix dashboard-site run build",
+  "outputDirectory": "dashboard-site/dist/client",
+  "installCommand": "npm --prefix dashboard-site install",
+  "framework": null
+}
