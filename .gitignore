@@ -21,3 +21,6 @@ test/tmp*/
 # Frontend deployment build
 dashboard-site/dist/
 dashboard-site/.vercel/
+.vercel/
+.env.local
+.env.*.local
