@@ -1,177 +1,166 @@
+# Secure Distributed File Vault
 
-# File Encryptor — Parallel Encryption & Decryption in C++
+Phase 3 replaces the toy encryption with real authenticated encryption while keeping the Phase 2 module boundaries.
 
-## 📖 Project Overview
+The app is still a local C++17 command-line program that encrypts or decrypts files in place. Writes are staged into temporary files and originals are replaced only after all chunks finish successfully, so decrypt failures do not replace encrypted input with partial plaintext.
 
-**File Encryptor** is a C++ application that demonstrates two different parallel‐processing strategies for file encryption and decryption:
+## Cryptography
 
-1. **Multiprocessing** (via `fork()`)  
-2. **Multithreading** (via `pthread` + shared memory + semaphores)
+- Algorithm: AES-256-GCM via OpenSSL EVP.
+- KDF: PBKDF2-HMAC-SHA256.
+- KDF iterations: 100,000 per chunk.
+- Salt: random 16 bytes per encrypted chunk.
+- Nonce: random 12 bytes per encrypted chunk.
+- Tag: 16-byte GCM authentication tag per chunk.
+- Header authentication: encrypted chunk headers are supplied to GCM as AAD.
 
-By splitting large input directories into chunks and processing them in parallel, this tool maximizes CPU utilization and reduces wall‐clock time for cryptographic operations.
+Decryption verifies the authentication tag before writing staged plaintext back over the source file. If ciphertext, header, password, nonce, salt, or tag data is wrong, decryption fails cleanly and the original encrypted file remains in place.
 
----
+## Encrypted Chunk Format
 
-## 🌲 Repository Structure
+Each encrypted chunk is stored as:
 
+```text
+fixed header | salt | nonce | ciphertext | auth tag
 ```
 
-encrypty/
-├── src/
-│   └── app/
-│       ├── processes/
-│       │   ├── ProcessManagement.hpp    ← Task scheduler & process‐spawn logic
-│       │   ├── ProcessManagement.cpp
-│       │   ├── Task.hpp                 ← Represents one file‐chunk task
-│       │   └── Task.cpp
-│       ├── threading/
-│       │   ├── ThreadPool.hpp           ← Thread manager & worker pool
-│       │   ├── ThreadPool.cpp
-│       │   └── SyncPrimitives.hpp       ← Shared memory + semaphores
-│       └── common/
-│           ├── CryptoEngine.hpp         ← AES/CBC implementation
-│           └── CryptoEngine.cpp
-├── test/                              ← Sample input directories & expected outputs
-│   └── test2.txt
-├── main.cpp                           ← CLI: reads directory + ENCRYPT/DECRYPT
-├── Makefile                           ← Build rules for both branches
-└── README.md                          ← You are here
+Fixed header fields:
 
-````
+```text
+magic          4 bytes   "SDFV"
+version        1 byte    1
+algorithm      1 byte    1 = AES-256-GCM
+kdf            1 byte    1 = PBKDF2-HMAC-SHA256
+flags          1 byte    0
+iterations     4 bytes   big-endian uint32
+salt size      2 bytes   big-endian uint16
+nonce size     2 bytes   big-endian uint16
+tag size       2 bytes   big-endian uint16
+plain size     8 bytes   big-endian uint64
+cipher size    8 bytes   big-endian uint64
+```
 
----
+The chunker uses these headers during decrypt to discover encrypted packet boundaries before submitting jobs.
 
-## 🌿 Branches
+## Architecture
 
-### 1. `add/childProcessing` (Multiprocessing)
+```text
+main.cpp
+`-- cli/
+    `-- CliApplication
+        |-- chunker/FileChunker
+        |-- crypto/EncryptionEngine
+        |   `-- Aes256GcmEncryptionEngine
+        |-- manifest/VaultManifest
+        |-- metadata/MetadataStore
+        |   `-- InMemoryMetadataStore
+        |-- storage/StorageAdapter
+        |   `-- LocalFileStorageAdapter
+        `-- jobs/JobQueue
+```
 
-- **Key Files:**  
-  - `src/app/processes/ProcessManagement.*`  
-  - `src/app/processes/Task.*`
+## Modules
 
-- **Flow:**
-  1. **TaskScheduler** (in `ProcessManagement`) scans the input directory and splits files into _N_ chunks.
-  2. For each chunk, `fork()` spawns a **child process**.
-  3. Each child calls `CryptoEngine::encryptChunk()` or `decryptChunk()`.
-  4. Parent waits (`waitpid`) for all children, then recombines output into final files.
+- `src/app/cli`: argument parsing, interactive prompts, validation orchestration, and application wiring.
+- `src/app/core`: shared action parsing and common value helpers.
+- `src/app/crypto`: encryption interface, AES-256-GCM implementation, and encrypted chunk header parsing.
+- `src/app/chunker`: deterministic file discovery and chunk manifest creation for plaintext and encrypted files.
+- `src/app/manifest`: file and chunk manifest model.
+- `src/app/metadata`: manifest persistence boundary, currently in-memory.
+- `src/app/storage`: staged local file reads/writes.
+- `src/app/jobs`: queued chunk processing over storage and encryption interfaces.
+- `src/app/fileHandling`: `.env` password loading.
+- `src/app/encryptDecrypt`: compatibility wrapper for the legacy `cryption` helper target.
 
-- **Pros:** OS‐level isolation, no data races  
-- **Cons:** Higher memory overhead, IPC complexity
+## Build
 
----
-
-### 2. `add/multithreading` (Multithreading + Shared Memory)
-
-- **Key Files:**  
-  - `src/app/threading/ThreadPool.*`  
-  - `src/app/threading/SyncPrimitives.*`
-
-- **Flow:**
-  1. **ThreadPool** creates a shared memory region (`mmap`) sized to hold _M_ chunks.
-  2. Launches _T_ POSIX threads; each thread:
-     - Reads its assigned chunk from shared memory  
-     - Calls `CryptoEngine::encryptChunk()` / `decryptChunk()`  
-     - Writes back to its segment
-  3. Semaphores (in `SyncPrimitives`) guard access to shared buffers.
-  4. Main thread writes all processed chunks to disk.
-
-- **Pros:** Lower overhead, fast context switches  
-- **Cons:** Manual synchronization, risk of deadlocks/races
-
----
-
-## 🏗️ Architecture & Data Flow
-
-```plaintext
-+-------------+
-|  main.cpp   |  ── parses args ──► [TaskScheduler]
-+-------------+                      ├─ splits directory into chunks
-       │                             └─ pushes Task objects
-       ▼
-+----------------------+       +----------------------+       +----------------------+
-| Multiprocessing Mode |──────►|  Encrypt/Decrypt     |◄──────| Multithreading Mode  |
-|  (fork & children)   |       |    CryptoEngine      |       |  (pthread pool)      |
-+----------------------+       +----------------------+       +----------------------+
-       │                                 ▲                             │
-       └────────► [ResultCollector] ◄────┘◄────────[SyncPrimitives]◄───┘
-                    writes final files
-````
-
-* **TaskScheduler**
-
-  * Scans `directory/`
-  * Creates `Task { filepath, offset, length }`
-
-* **Process/Thread Workers**
-
-  * Fetch a `Task`
-  * Call `CryptoEngine::process(buffer, key, iv)`
-  * Signal completion
-
-* **ResultCollector**
-
-  * Merges processed buffers into full output files
-
----
-
-## ⚙️ Build & Run
+OpenSSL 3 is required. The default Makefile path is Homebrew's Apple Silicon location:
 
 ```bash
-# 1. Clone & switch branch
-git clone https://github.com/<you>/encrypty.git
-cd encrypty
-git checkout add/childProcessing   # or add/multithreading
-
-# 2. (Optional) Python helper for test dirs
-python3 -m venv venv
-source venv/bin/activate
-python makeDirs.py
-
-# 3. Build
 make
-
-# 4. Run
-./encrypty
-# prompts:
-#   Enter the directory path:  test/
-#   Enter the action (encrypt/decrypt): ENCRYPT
 ```
 
-Outputs are written alongside originals as `*.enc` or `*.dec` extensions.
+Override the OpenSSL prefix if needed:
 
----
+```bash
+make OPENSSL_PREFIX=/path/to/openssl
+```
 
-## 🚀 Performance Tips
+This builds:
 
-* **Chunk Size:**
+- `encrypt_decrypt`: main CLI program.
+- `cryption`: legacy task-level helper, now backed by the same AES-GCM flow.
 
-  * Too small → high overhead
-  * Too large → poor CPU‐I/O overlap
-* **Worker Count:**
+Clean generated build files with:
 
-  * ≈ number of CPU cores (multithreading)
-  * ≤ number of cores (forking)
-* **I/O Optimizations:**
+```bash
+make clean
+```
 
-  * Use `O_DIRECT` or asynchronous I/O
-  * Tune read/write buffer sizes
+## Configuration
 
----
+Create a `.env` file in the directory where you run the executable:
 
-## 🎯 Future Enhancements
+```text
+VAULT_PASSWORD=correct horse battery staple
+```
 
-* **Benchmark Harness** to compare modes
-* **Key Management Module** (e.g., HSM integration)
-* **Distributed Mode** via MPI or ZeroMQ
-* **GPU Offload** for CryptoEngine
+`PASSWORD=...` is also accepted. `KEY=...` and a raw first-line value are accepted only as compatibility aliases; the value is treated as password text, not as a numeric encryption key.
 
----
+## Usage
 
-## 🤝 Contributing
+Command-line mode:
 
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feat/your-feature`)
-3. Commit your changes
-4. Open a PR against `main`
+```bash
+./encrypt_decrypt ./test encrypt
+./encrypt_decrypt ./test decrypt
+```
 
-Please adhere to the existing code style and add tests in `test/`!
+Interactive mode:
+
+```bash
+./encrypt_decrypt
+```
+
+The program modifies files in place after staging successful output. Use copies of important files until persistent metadata and recovery workflows are added.
+
+## Dashboard
+
+A static frontend dashboard with realistic sample vault telemetry is available at:
+
+```text
+dashboard/index.html
+```
+
+It shows backup overview, protected files, encrypted size, chunk count, dedupe ratio, job queue status, failed jobs, AI security findings, restore history, and throughput metrics. It is currently sample-data only and not wired to the C++ vault runtime.
+
+## Tests
+
+```bash
+make test
+```
+
+The test target runs:
+
+- `architecture_tests`: C++ checks for action parsing, AES-GCM round trip, header discovery, chunking, metadata, storage, job queue execution, and tamper failure.
+- `test/run_roundtrip.sh`: CLI validation and encrypt/decrypt round-trip checks.
+
+Temporary test data is written under `test/tmp*` and ignored by git.
+
+## Phase 3 Scope
+
+Completed in this phase:
+
+- Replaced byte-shift encryption with AES-256-GCM.
+- Added password-based key derivation.
+- Added random salt, random nonce, and GCM tag handling.
+- Added encrypted chunk packet headers.
+- Added authenticated decrypt failure behavior.
+- Added tests proving tampered ciphertext fails to decrypt and leaves the encrypted file in place.
+
+Not included yet:
+
+- Persistent manifest storage.
+- Key rotation or password change workflows.
+- Remote or distributed storage.
+- Frontend or deployment.

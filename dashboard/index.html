@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Secure Distributed File Vault Dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Vault navigation">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">SV</div>
+        <div>
+          <div class="brand-name">Secure Vault</div>
+          <div class="brand-env">Production mesh</div>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="Primary">
+        <a class="nav-item active" href="#">Overview</a>
+        <a class="nav-item" href="#">Backups</a>
+        <a class="nav-item" href="#">Protected files</a>
+        <a class="nav-item" href="#">Restore jobs</a>
+        <a class="nav-item" href="#">Security findings</a>
+        <a class="nav-item" href="#">Storage nodes</a>
+      </nav>
+
+      <div class="vault-health">
+        <div class="health-row">
+          <span>Cluster health</span>
+          <strong>99.98%</strong>
+        </div>
+        <div class="health-meter" aria-label="Cluster health 99.98 percent">
+          <span style="width: 99.98%"></span>
+        </div>
+        <div class="health-meta">7 regions | 42 storage nodes</div>
+      </div>
+    </aside>
+
+    <main class="dashboard">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Secure Distributed File Vault</p>
+          <h1>Vault Operations Dashboard</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-pill good">
+            <span class="status-dot"></span>
+            Backups active
+          </div>
+          <button class="icon-button" type="button" aria-label="Refresh dashboard" title="Refresh dashboard">
+            Refresh
+          </button>
+          <button class="primary-action" type="button">Run restore drill</button>
+        </div>
+      </header>
+
+      <section class="overview-grid" aria-label="Backup overview">
+        <article class="metric-card">
+          <div class="metric-label">Files protected</div>
+          <div class="metric-value">1.28M</div>
+          <div class="metric-trend positive">+42,418 since Friday</div>
+        </article>
+        <article class="metric-card">
+          <div class="metric-label">Total encrypted size</div>
+          <div class="metric-value">18.7 TB</div>
+          <div class="metric-trend neutral">13.4 TB after dedupe</div>
+        </article>
+        <article class="metric-card">
+          <div class="metric-label">Chunk count</div>
+          <div class="metric-value">4.92M</div>
+          <div class="metric-trend neutral">1 MiB target chunking</div>
+        </article>
+        <article class="metric-card">
+          <div class="metric-label">Dedupe ratio</div>
+          <div class="metric-value">28.4%</div>
+          <div class="metric-trend positive">+3.1 pts this cycle</div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel backup-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Backup Overview</h2>
+              <p>Last 24 hours by vault namespace</p>
+            </div>
+            <span class="time-window">24h</span>
+          </div>
+          <div class="backup-layout">
+            <div class="ring-wrap">
+              <canvas id="backupRing" width="220" height="220" aria-label="Backup completion chart"></canvas>
+              <div class="ring-center">
+                <strong>96.8%</strong>
+                <span>protected</span>
+              </div>
+            </div>
+            <div class="backup-stats" id="backupStats"></div>
+          </div>
+        </article>
+
+        <article class="panel throughput-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Throughput Metrics</h2>
+              <p>Encrypted write throughput and restore read rate</p>
+            </div>
+            <span class="time-window">live</span>
+          </div>
+          <canvas id="throughputChart" height="210" aria-label="Throughput line chart"></canvas>
+          <div class="chart-legend">
+            <span><i class="legend-key write"></i>Encrypted write</span>
+            <span><i class="legend-key restore"></i>Restore read</span>
+          </div>
+        </article>
+
+        <article class="panel queue-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Job Queue Status</h2>
+              <p>Shard workers across active backup and restore lanes</p>
+            </div>
+            <span class="time-window">now</span>
+          </div>
+          <div class="queue-summary">
+            <div>
+              <span class="summary-number">312</span>
+              <span class="summary-label">running</span>
+            </div>
+            <div>
+              <span class="summary-number">1,984</span>
+              <span class="summary-label">queued</span>
+            </div>
+            <div>
+              <span class="summary-number">27</span>
+              <span class="summary-label">retrying</span>
+            </div>
+          </div>
+          <div id="queueLanes" class="queue-lanes"></div>
+        </article>
+
+        <article class="panel findings-panel">
+          <div class="panel-header">
+            <div>
+              <h2>AI Security Findings</h2>
+              <p>Model-assisted review of vault telemetry and policy drift</p>
+            </div>
+            <span class="risk-badge">3 open</span>
+          </div>
+          <div id="securityFindings" class="finding-list"></div>
+        </article>
+
+        <article class="panel failed-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Failed Jobs</h2>
+              <p>Failures requiring operator review</p>
+            </div>
+            <span class="critical-count">8</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Namespace</th>
+                  <th>Reason</th>
+                  <th>Age</th>
+                </tr>
+              </thead>
+              <tbody id="failedJobs"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel restore-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Restore History</h2>
+              <p>Recent completed restore requests</p>
+            </div>
+            <span class="time-window">7d</span>
+          </div>
+          <div id="restoreHistory" class="restore-list"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

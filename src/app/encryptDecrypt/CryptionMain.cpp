@@ -6,6 +6,5 @@ int main(int argc, char* argv[]) {
         std::cerr << "Usage: ./cryption <task_data>" << std::endl;
         return 1;
     }
-    executeCryption(argv[1]);
-    return 0;
+    return executeCryption(argv[1]);
 }

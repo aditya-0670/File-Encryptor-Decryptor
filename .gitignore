@@ -1,0 +1,23 @@
+# Build outputs
+*.o
+*.out
+*.dSYM/
+encrypt_decrypt
+cryption
+architecture_tests
+
+# Local configuration
+.env
+
+# Local editor and OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Test scratch data
+test/tmp*/
+*.sdfv.tmp
+
+# Frontend deployment build
+dashboard-site/dist/
+dashboard-site/.vercel/
